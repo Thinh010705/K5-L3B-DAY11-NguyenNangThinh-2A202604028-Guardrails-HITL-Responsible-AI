@@ -6,17 +6,19 @@ OpenAI SDK runtime — dùng cho:
 
 Gemini Red Team dùng Google ADK trong agents/*.py — không đi qua file này.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from core.config import (
-    get_red_model,
-    get_red_provider,
+    blue_client_kwargs,
     get_blue_model,
     get_blue_provider,
-    blue_client_kwargs,
+    get_red_model,
+    get_red_provider,
     red_openai_client_kwargs,
 )
 
@@ -96,9 +98,7 @@ class OpenAIRunner:
             if cb is None:
                 continue
             try:
-                result = await cb(
-                    invocation_context=ctx, user_message=user_content
-                )
+                result = await cb(invocation_context=ctx, user_message=user_content)
             except TypeError:
                 result = cb(invocation_context=ctx, user_message=user_content)
             if result is None:
@@ -114,9 +114,7 @@ class OpenAIRunner:
         except ImportError:
             return text
 
-        content = types.Content(
-            role="model", parts=[types.Part.from_text(text=text)]
-        )
+        content = types.Content(role="model", parts=[types.Part.from_text(text=text)])
 
         class _Resp:
             pass

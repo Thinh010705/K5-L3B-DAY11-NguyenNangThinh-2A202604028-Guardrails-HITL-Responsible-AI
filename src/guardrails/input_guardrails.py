@@ -43,24 +43,27 @@ InputStatus = Literal["ALLOW", "BLOCK"]
 # ============================================================
 
 def detect_injection(user_input: str) -> InputStatus:
-    """Detect prompt injection patterns in user input.
+    """Block instruction-hijacking signals, including invisible Unicode characters.
 
-    Args:
-        user_input: The user's message
-
-    Returns:
-        ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
+    This is a rule-based guardrail, not a comprehensive semantic security filter.
     """
-    INJECTION_PATTERNS = [
-        # TODO: Add at least 5 regex patterns
-        # Example:
-        # r"ignore (all )?(previous|above) instructions",
-    ]
+    import unicodedata
 
-    for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, user_input, re.IGNORECASE):
-            return "BLOCK"
-    return "ALLOW"
+    text = unicodedata.normalize("NFKC", user_input or "")
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    text = re.sub(r"\s+", " ", text).casefold().strip()
+    patterns = (
+        r"\bignore\s+(?:all\s+)?(?:previous|above|earlier|prior)\s+instructions\b",
+        r"\byou\s+are\s+now\b",
+        r"\bsystem\s+prompt\b",
+        r"\breveal\s+(?:your|the)\s+(?:(?:hidden|system)\s+)?(?:instructions|prompt)\b",
+        r"\bpretend\s+(?:that\s+)?you\s+are\b",
+        r"\bact\s+as\s+(?:an?\s+)?(?:unrestricted|unfiltered|uncensored)\b",
+        r"\b(?:bypass|disable|override)\s+(?:your\s+)?(?:safety\s+)?(?:rules|guardrails|filters|instructions)\b",
+        r"\b(?:developer|system)\s*:\s*(?:ignore|override|reveal)\b",
+        r"\bbỏ\s+qua\s+(?:mọi\s+)?(?:chỉ\s+dẫn|hướng\s+dẫn)\b",
+    )
+    return "BLOCK" if any(re.search(p, text, flags=re.IGNORECASE) for p in patterns) else "ALLOW"
 
 
 # ============================================================
@@ -75,23 +78,27 @@ def detect_injection(user_input: str) -> InputStatus:
 # ============================================================
 
 def topic_filter(user_input: str) -> InputStatus:
-    """Decide whether the input is on-topic for VinBank.
+    """Restrict the VinBank assistant to banking topics; block disallowed topics first."""
+    import unicodedata
 
-    Args:
-        user_input: The user's message
+    def normalize(value: str) -> str:
+        value = unicodedata.normalize("NFKD", value.casefold())
+        value = "".join(c for c in value if not unicodedata.combining(c))
+        return re.sub(r"\s+", " ", value).strip()
 
-    Returns:
-        ``"BLOCK"`` = chặn (off-topic hoặc topic cấm).
-        ``"ALLOW"`` = cho qua (câu banking hợp lệ).
-    """
-    input_lower = user_input.lower()
+    text = normalize(user_input or "")
+    if not text:
+        return "BLOCK"
 
-    # TODO: Implement logic:
-    # 1. If input contains any blocked topic -> return "BLOCK"
-    # 2. If input doesn't contain any allowed topic -> return "BLOCK"
-    # 3. Otherwise -> return "ALLOW"
+    def contains(term: str) -> bool:
+        pattern = r"(?<!\w)" + re.escape(normalize(term)) + r"(?!\w)"
+        return bool(re.search(pattern, text))
 
-    pass  # Replace with your implementation
+    if any(contains(term) for term in BLOCKED_TOPICS):
+        return "BLOCK"
+    additions = ("bank", "vinbank", "chuyển khoản", "thẻ", "ngân hàng", "khoản vay")
+    allowed = tuple(ALLOWED_TOPICS) + additions
+    return "ALLOW" if any(contains(term) for term in allowed) else "BLOCK"
 
 
 # ============================================================
@@ -135,23 +142,20 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         invocation_context: InvocationContext,
         user_message: types.Content,
     ) -> types.Content | None:
-        """Check user message before sending to the agent.
-
-        Returns:
-            None if message is safe (let it through),
-            types.Content if message is blocked (return replacement)
-        """
+        """Reject attack/off-topic requests before the model call."""
         self.total_count += 1
         text = self._extract_text(user_message)
-
-        # TODO: Implement logic:
-        # 1. Call detect_injection(text)
-        #    - If "BLOCK": increment blocked_count, return self._block_response("...")
-        # 2. Call topic_filter(text)
-        #    - If "BLOCK": increment blocked_count, return self._block_response("...")
-        # 3. If both return "ALLOW": return None (let message through)
-
-        pass  # Replace with your implementation
+        if detect_injection(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "I cannot process that request because it attempts to change the assistant's instructions."
+            )
+        if topic_filter(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "I can only help with VinBank banking-related questions."
+            )
+        return None
 
 
 # ============================================================

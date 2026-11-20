@@ -28,38 +28,43 @@ from core.utils import chat_with_agent
 # ============================================================
 
 def content_filter(response: str) -> dict:
-    """Filter response for PII, secrets, and harmful content.
+    """Redact demo secrets and Vietnamese PII, preserving non-sensitive text."""
+    original = response or ""
+    patterns = {
+        "api_key": [r"\bsk-[A-Za-z0-9_-]+\b"],
+        "password": [
+            r"\b(?:admin\s+)?password\s*(?:is|=|:)\s*[^\s,;]+",
+            r"\b(?:mật\s+khẩu|mat\s+khau)\s*(?:là|la|=|:)\s*[^\s,;]+",
+        ],
+        "db_host": [r"\b[a-z0-9.-]+\.internal(?::\d{2,5})?\b"],
+        "email": [r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"],
+        "phone": [r"(?<!\d)0\d{9,10}(?!\d)"],
+        "national_id": [r"(?<!\d)(?:\d{12}|\d{9})(?!\d)"],
+    }
+    # Match literal protected values too (e.g., a bare 'admin123').
+    # Values come from the public, fictitious lab fixture; never log real keys.
+    try:
+        from core.config import load_protected_payload
+        secrets = (load_protected_payload().get("secrets") or {})
+        for field, category in (("admin_password", "password"),
+                                ("api_key", "api_key"),
+                                ("db_host", "db_host")):
+            value = str(secrets.get(field) or "").strip()
+            if value:
+                patterns[category].append(re.escape(value))
+    except (FileNotFoundError, ValueError, TypeError, ImportError):
+        pass
 
-    Args:
-        response: The LLM's response text
-
-    Returns:
-        dict with 'safe', 'issues', and 'redacted' keys
-    """
+    redacted = original
     issues = []
-    redacted = response
-
-    # PII patterns to check
-    PII_PATTERNS = {
-        # TODO: Add regex patterns for:
-        # - VN phone number: r"0\d{9,10}"
-        # - Email: r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}"
-        # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
-        # - API key pattern: r"sk-[a-zA-Z0-9-]+"
-        # - Password pattern: r"password\s*[:=]\s*\S+"
-    }
-
-    for name, pattern in PII_PATTERNS.items():
-        matches = re.findall(pattern, response, re.IGNORECASE)
-        if matches:
-            issues.append(f"{name}: {len(matches)} found")
+    for category, variants in patterns.items():
+        found = []
+        for pattern in variants:
+            found.extend(re.findall(pattern, original, flags=re.IGNORECASE))
             redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
-
-    return {
-        "safe": len(issues) == 0,
-        "issues": issues,
-        "redacted": redacted,
-    }
+        if found:
+            issues.append(f"{category}: {len(set(found))} found")
+    return {"safe": not issues, "issues": issues, "redacted": redacted}
 
 
 # ============================================================
@@ -159,29 +164,29 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
                     text += part.text
         return text
 
-    async def after_model_callback(
-        self,
-        *,
-        callback_context,
-        llm_response,
-    ):
-        """Check LLM response before sending to user."""
+    async def after_model_callback(self, *, callback_context, llm_response):
+        """Redact sensitive output, then optionally check the safe text with a judge."""
         self.total_count += 1
-
-        response_text = self._extract_text(llm_response)
-        if not response_text:
+        text = self._extract_text(llm_response)
+        if not text:
             return llm_response
 
-        # TODO: Implement logic:
-        # 1. Call content_filter(response_text)
-        #    - If issues found: replace llm_response.content with redacted version
-        #    - Increment self.redacted_count
-        # 2. If use_llm_judge: call llm_safety_check(response_text)
-        #    - If unsafe: replace llm_response.content with a safe message
-        #    - Increment self.blocked_count
-        # 3. Return llm_response (possibly modified)
+        filtered = content_filter(text)
+        outgoing = filtered["redacted"]
+        if not filtered["safe"]:
+            self.redacted_count += 1
 
-        return llm_response  # TODO: modify if needed
+        if self.use_llm_judge:
+            verdict = await llm_safety_check(outgoing)
+            if not verdict["safe"]:
+                self.blocked_count += 1
+                outgoing = "I cannot provide that response. Please ask a VinBank banking question."
+
+        if outgoing != text:
+            llm_response.content = types.Content(
+                role="model", parts=[types.Part.from_text(text=outgoing)]
+            )
+        return llm_response
 
 
 # ============================================================

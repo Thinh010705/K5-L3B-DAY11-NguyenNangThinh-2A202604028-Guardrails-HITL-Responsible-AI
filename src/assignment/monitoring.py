@@ -42,16 +42,38 @@ class MonitoringAlert:
     judge_fails: int = 0
 
     def check_metrics(self) -> list[Alert]:
-        """TODO: compute rates, append Alert objects when thresholds exceeded."""
-        raise NotImplementedError("Implement MonitoringAlert.check_metrics")
+        """Raise each threshold alert at most once per monitoring instance."""
+        observations = []
+        if self.total_requests:
+            block_rate = self.blocked_requests / self.total_requests
+            if block_rate > self.block_rate_threshold:
+                observations.append(("block_rate", block_rate, self.block_rate_threshold))
+        if self.rate_limit_hits > self.rate_limit_hit_threshold:
+            observations.append(("rate_limit_hits", float(self.rate_limit_hits),
+                                 float(self.rate_limit_hit_threshold)))
+        if self.judge_checks:
+            failure_rate = self.judge_fails / self.judge_checks
+            if failure_rate > self.judge_fail_rate_threshold:
+                observations.append(("judge_fail_rate", failure_rate,
+                                     self.judge_fail_rate_threshold))
+
+        existing = {alert.metric for alert in self.alerts}
+        for metric, value, threshold in observations:
+            if metric not in existing:
+                self.alerts.append(Alert(
+                    metric=metric, value=value, threshold=threshold,
+                    message=f"{metric} exceeded threshold ({value:.3f} > {threshold:.3f})",
+                ))
+                existing.add(metric)
+        return self.alerts
 
     def export_json(self, filepath: str | None = None):
-        """TODO: write metrics + alerts to JSON under repo-root ``outputs/`` by default.
-        Use ``filepath or default_metrics_path()`` so running from ``src/`` does not
-        create ``src/outputs/``.
-        """
-        _ = filepath or default_metrics_path()
-        raise NotImplementedError("Implement MonitoringAlert.export_json")
+        """Persist a live counters snapshot and its alerts."""
+        self.check_metrics()
+        path = Path(filepath or default_metrics_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.snapshot(), ensure_ascii=False, indent=2), encoding="utf-8")
+        return str(path)
 
     def snapshot(self) -> dict:
         block_rate = (
