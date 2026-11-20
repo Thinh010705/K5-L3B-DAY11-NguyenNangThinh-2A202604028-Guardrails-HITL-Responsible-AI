@@ -1,5 +1,9 @@
 # Day 11 — Controlled Agent Security (2026)
 
+**Học viên:** Nguyễn Năng Thịnh · **MSSV:** 2A202604028 · **Lớp:** L3B (Khóa 5)
+
+**Chạy bài lab từ thư mục gốc:** tạo `.env` theo `.env.example`, cài `requirements.txt`, rồi chạy `python src/main.py --part 2`, `--part 3`, `--part 4` theo thứ tự. Tự kiểm bằng `pytest tests/smoke tests/public -q` và `python scripts/grade.py --submission-dir . --out outputs/grade_report.json`.
+
 > 👤 **Hình thức:** bài tập **cá nhân** (1 người / 1 MSSV).  
 > 🎯 **Mục tiêu:** đóng vai **Blue Team** để học cách xây Guardrails phòng thủ, rồi đóng vai **Red Team** để tấn công agent **Red** hoặc **Red Advance**.  
 > ✅ Làm theo **Checkpoint 1 → 5** trong [`CHECKPOINTS.md`](CHECKPOINTS.md) · nộp theo [`SUBMISSION.md`](SUBMISSION.md).
